@@ -1,0 +1,21 @@
+{
+    "name": "i5-agency/extrabat",
+    "description": "Connect with extrabat API",
+    "type": "library",
+    "require": {
+        "guzzlehttp/guzzle": "^7.8",
+        "guzzlehttp/psr7": "^2.6"
+    },
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "I5Agency\\Extrabat\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Anthony Martin",
+            "email": "anthony@i5.agency"
+        }
+    ]
+}
