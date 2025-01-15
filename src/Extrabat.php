@@ -1,185 +1,180 @@
 <?php
 
-namespace I5Agency;
+namespace I5Agency\Extrabat;
 
 use GuzzleHttp\Client;
+use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Exception\BadResponseException;
 use Psr\Http\Message\ResponseInterface;
 
 class Extrabat
 {
-    /**
-     * An array of valid HTTP verbs.
-     */
-    private static $valid_verbs = ['get', 'post', 'put', 'patch', 'delete'];
+    private const VALID_VERBS = ['get', 'post', 'put', 'patch', 'delete'];
+    private const TOKEN_URL = 'https://www.myextrabat.com/authentification/oauth2/token';
+    private const API_URL = 'https://api.extrabat.com/';
 
-    /**
-     * An array of valid HTTP verbs.
-     */
-    private static $token_url = 'https://www.myextrabat.com/authentification/oauth2/token';
+    private string $token;
+    private string $clientId;
+    private string $clientSecret;
+    private Client $client;
 
-    /**
-     * @var string The Eventbrite OAuth token.
-     */
-    private $token;
-
-    /**
-     * @var string The Extrabat client ID
-     */
-    private $client_id;
-
-    /**
-     * @var string The Extrabat client secret
-     */
-    private $client_secret;
-
-    /**
-     * @var \GuzzleHttp\Client
-     */
-    private $client;
-
-    public function __construct($client_id, $client_secret)
+    public function __construct(string $clientId, string $clientSecret)
     {
-        $this->client_id        = $client_id;
-        $this->client_secret    = $client_secret;
-
-        if (! empty($client_id) && ! empty($client_secret)) {
-            $this->accessToken   = self::getAccessToken($client_id, $client_secret);
-        } else {
-            throw new \Exception('Client ID and client Secret is required to connect to the Extrabat API.');
+        if (empty($clientId) || empty($clientSecret)) {
+            throw new \InvalidArgumentException('Client ID and client secret are required to connect to the Extrabat API.');
         }
+
+        $this->clientId        = $clientId;
+        $this->clientSecret    = $clientSecret;
+
+        $this->httpClient       = new Client();
+        $this->accessToken      = $this->getAccessToken();
     }
 
     /**
      * Get access token
      *
-     * @param $client_id
-     * @param $client_secret
+     * @param $clientId
+     * @param $clientSecret
      * @return false
+     * @throws GuzzleException
      */
-    static function getAccessToken($client_id, $client_secret) {
-        $response = self::call('POST', $token_url, [
-            'body' => [
-                'grant_type'    => 'client_credentials',
-                'client_id'     => $client_id,
-                'client_secret' => $client_secret,
-            ]
-        ]);
+    private function getAccessToken(): string
+    {
+        try {
+            $response = $this->httpClient->post(self::TOKEN_URL, [
+                'form_params' => [
+                    'grant_type' => 'client_credentials',
+                    'client_id' => $this->clientId,
+                    'client_secret' => $this->clientSecret,
+                ],
+            ]);
 
+            $responseData = json_decode($response->getBody()->getContents(), true);
 
-        $test = 'titi';
-//        $curl = new \Extrabat\Curl();
-//        $curl->setRequestMethod('POST');
-//        $curl->setUrl(self::TOKEN_URL);
-//        $curl->setPort(self::TOKEN_PORT);
-//        $curl->setBody(http_build_query(array (
-//            'grant_type'    => 'client_credentials',
-//            'client_id'     => $client_id,
-//            'client_secret' => $client_secret,
-//        )));
-//        $response = $curl->exec();
-//
-//        if (empty($response)) {
-//            return FALSE;
-//        }
-//
-//        $response = json_decode($response);
-//
-//        if (empty($response) || empty($response->access_token)) {
-//            return FALSE;
-//        }
+            if (!isset($responseData['access_token'])) {
+                throw new \RuntimeException('Access token not found in response.');
+            }
 
-        return $response->access_token;
+            return $responseData['access_token'];
+        } catch (RequestException $e) {
+            throw new \RuntimeException('Failed to fetch access token: ' . $e->getMessage());
+        }
     }
 
     /**
-     * Make the call to Extrabat, only synchronous calls at present.
+     * Make the call to Extrabat, only synchronous calls at present
      *
      * @param string $verb
      * @param string $endpoint
-     * @param array  $options
-     *
-     * @return array|mixed|\Psr\Http\Message\ResponseInterface
-     * @throws \Exception
+     * @param array $options
+     * @return array
+     * @throws \GuzzleHttp\Exception\GuzzleException
      */
-    public function call($verb, $endpoint, $options = [])
+    public function call(string $verb, string $endpoint, array $options = [], $decodeJson = false): array
     {
-        if ($this->validMethod($verb)) {
-            // Get the headers and body from the options.
-            $headers = isset($options['headers']) ? $options['headers'] : [];
-            $body = isset($options['body']) ? $options['body'] : null;
-            $pv = isset($options['protocol_version']) ? $options['protocol_version'] : '1.1';
-            // Make the request.
-            $request = new Request($verb, $endpoint, $headers, $body, $pv);
-            // Save the request as the last request.
-            $this->last_request = $request;
-            // Send it.
-            $response = $this->client->send($request, $options);
-            if ($response instanceof ResponseInterface) {
-                // Set the last response.
-                $this->last_response = $response;
-                // If the caller wants the raw response, give it to them.
-                if (isset($options['parse_response']) && $options['parse_response'] === false) {
-                    return $response;
-                }
-                $parsed_response = $this->parseResponse($response);
-                return $parsed_response;
+        if (!in_array(strtolower($verb), self::VALID_VERBS, true)) {
+            throw new \InvalidArgumentException("Invalid HTTP verb: $verb");
+        }
+
+        $headers = $options['headers'] ?? [];
+        $headers['Authorization'] = 'Bearer ' . $this->accessToken;
+
+        try {
+            if ($decodeJson) {
+                $body = json_decode($options['body']);
             } else {
-                // This only really happens when the network is interrupted.
-                throw new BadResponseException('A bad response was received.',
-                    $request);
+                $body = $options['body'] ?? [];
             }
-        } else {
-            throw new \Exception('Unrecognised HTTP verb.');
+            $response = $this->httpClient->request($verb, self::API_URL . $endpoint, [
+                'headers' => $headers,
+                'json' => $body ?? [],
+            ]);
+
+            return $this->parseResponse($response);
+        } catch (RequestException $e) {
+            throw new \RuntimeException('API call failed: ' . $e->getMessage());
         }
     }
 
     /**
-     * Checks if the HTTP method being used is correct.
+     * Parse the response from
      *
-     * @param string $http_method
-     *
-     * @return bool
-     */
-    public function validMethod($http_method)
-    {
-        if (in_array(strtolower($http_method), self::$valid_verbs)) {
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Parses the response from
-     *
-     * @param \Psr\Http\Message\ResponseInterface $response
-     *
+     * @param ResponseInterface $response
      * @return array
      */
-    public function parseResponse(ResponseInterface $response)
+    private function parseResponse(ResponseInterface $response): array
     {
         $body = $response->getBody()->getContents();
+
         return [
             'code' => $response->getStatusCode(),
             'headers' => $response->getHeaders(),
-            'body' => ($this->isValidJson($body)) ? json_decode($body, true) : $body,
+            'body' => $this->isValidJson($body) ? json_decode($body, true) : $body,
         ];
     }
 
     /**
-     * Checks a string to see if it's JSON. True if it is, false if it's not.
+     * Checks a string to see if it's JSON. True if it is, false if it's not
      *
      * @param string $string
-     *
      * @return bool
      */
-    public function isValidJson($string)
+    private function isValidJson(string $string): bool
     {
-        if (is_string($string)) {
-            json_decode($string);
-            return (json_last_error() === JSON_ERROR_NONE);
+        json_decode($string);
+        return json_last_error() === JSON_ERROR_NONE;
+    }
+
+    /**
+     * Get ID by parameter by name
+     *
+     * @param string $value
+     * @param string $name
+     * @param $field
+     * @param $option
+     * @return string|array|null
+     * @throws GuzzleException
+     */
+    public function getIDParameterByName(string $value, string $name, $field = 'libelle', $option = null): string|array|null
+    {
+        $endpointMap = [
+            'civility' => 'v1/parametres/civilites',
+            'phone-type' => 'v1/parametres/type-telephone',
+            'address-type' => 'v1/parametres/type-adresse',
+            'status' => 'v1/parametres/client-statuts',
+            'group' => 'v1/parametres/regroupements',
+            'question' => 'v1/parametres/questions-complementaires',
+            'origine' => 'v1/parametres/origines-contact',
+            'users' => 'v1/utilisateurs',
+        ];
+
+        if (!isset($endpointMap[$name])) {
+            throw new \InvalidArgumentException("Unknown parameter name: $name");
         }
-        return false;
+
+        $response = $this->call('GET', $endpointMap[$name]);
+
+        if (isset($response['body']) && is_array($response['body'])) {
+            foreach ($response['body'] as $item) {
+                if (isset($item[$field]) && $item[$field] === $value) {
+                    if (is_null($option)) {
+                        return $item['id'] ?? null;
+                    } else {
+                        foreach ($item['options'] as $optionItem) {
+                            if ($optionItem['optionVal'] === $option) {
+                                return [
+                                    'questionId' => $item['id'] ?? null,
+                                    'valueId' => $optionItem['id'] ?? null,
+                                ];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 }
